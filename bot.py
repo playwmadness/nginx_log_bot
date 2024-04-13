@@ -4,17 +4,28 @@ import asyncio
 import os
 import sys
 from asyncio.exceptions import CancelledError
-from datetime import datetime, timezone
+from enum import IntEnum
 from pathlib import Path
 from signal import SIGINT, SIGTERM, signal
-from typing import Union
+from typing import Any, Union
 
 from dotenv import load_dotenv
+from sqlalchemy import create_engine
 from watchdog.events import FileModifiedEvent
 from watchdog.observers import Observer
 
+from ipinfo import db_models
 from observer import ModifiedHandler
 from tg import BotThread
+
+
+class ExitCode(IntEnum):
+    OK = 0
+    NO_FILEPATH = 1
+    NO_FILE = 2
+    NO_ENVVARS = 3
+    FAILED_TO_START_BOT = 7
+    OTHER = 127
 
 
 class Shutdown:
@@ -30,61 +41,74 @@ class Shutdown:
     def __init__(self):
         self._is_shutdown = False
 
-    def _shutdown(self, signum, frame):
+    def _shutdown(self, *_) -> None:
         self._is_shutdown = True
 
     @property
-    def shutdown(self):
+    def shutdown(self) -> bool:
         return self._is_shutdown
 
 
-async def main(argv: list[str]) -> int:
+async def main(argv: list[str]) -> ExitCode:
     if not argv:
         print("Expected file path argument", file=sys.stderr)
-        return 1
+        return ExitCode.NO_FILEPATH
 
     if not Path(argv[0]).is_file():
-        print(f"Expected {argv[0]} to be a regular file")
-        return 2
+        print(f"Expected {argv[0]} to be a regular file", file=sys.stderr)
+        return ExitCode.NO_FILE
 
     load_dotenv()
-    keys = [
+    _envvars = [
         "IPINFO_API_KEY",
         "TELEGRAM_API_KEY",
         "TELEGRAM_USER_ID",
+        "ENGINE_URL",
     ]
-    keys = {key: os.getenv(key) for key in keys}
+    envvars: dict[str, Any] = {key: os.getenv(key) for key in _envvars}
 
-    if fails := tuple(filter(lambda x: x[1] is None, keys.items())):
+    if fails := tuple(filter(lambda x: x[1] is None, envvars.items())):
         print("Not all env vars were found:", file=sys.stderr)
         for f, _ in fails:
             print(f, file=sys.stderr)
-        return 3
+        return ExitCode.NO_ENVVARS
+
+    s = Shutdown()
+
+    db_engine = create_engine(envvars["ENGINE_URL"])
+    db_models.Base.metadata.create_all(db_engine)
 
     bot = BotThread(
-        keys["IPINFO_API_KEY"],  # pyright: ignore
-        keys["TELEGRAM_API_KEY"],  # pyright: ignore
-        keys["TELEGRAM_USER_ID"],  # pyright: ignore
+        envvars["IPINFO_API_KEY"],
+        db_engine,
+        envvars["TELEGRAM_API_KEY"],
+        envvars["TELEGRAM_USER_ID"],
     )
 
-    handler = ModifiedHandler(bot.queue)
+    try:
+        bot.start()
+    except RuntimeError:
+        print("Failed to start Telegram Bot Thread", file=sys.stderr)
+        return ExitCode.FAILED_TO_START_BOT
+
+    handler = ModifiedHandler(bot._queue, bot.last_access())
 
     observer = Observer()
     observer.schedule(handler, argv[0], event_filter=(FileModifiedEvent,))
 
-    exit_status: int = 0
+    exit_status: ExitCode = ExitCode.OK
+    print("Starting...")
+
+    handler.on_modified(FileModifiedEvent(argv[0], is_synthetic=True))
+    observer.start()
+
     try:
-        s = Shutdown()
-        if not s.shutdown:
-            bot.start()
-            observer.start()
-        print("Running...")
         while not s.shutdown:
             await asyncio.sleep(1)
     except CancelledError as e:
         pass
     except Exception as e:
-        exit_status = 127
+        exit_status = ExitCode.OTHER
         print(e, file=sys.stderr)
     finally:
         print("Shutting down...")
