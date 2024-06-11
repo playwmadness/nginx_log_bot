@@ -1,12 +1,11 @@
 #!/usr/bin/env python3
 
-import asyncio
 import os
 import sys
-from asyncio.exceptions import CancelledError
 from enum import IntEnum
 from pathlib import Path
 from signal import SIGINT, SIGTERM, signal
+from time import sleep
 from typing import Any, Union
 
 from dotenv import load_dotenv
@@ -49,7 +48,7 @@ class Shutdown:
         return self._is_shutdown
 
 
-async def main(argv: list[str]) -> ExitCode:
+def main(argv: list[str]) -> ExitCode:
     if not argv:
         print("Expected file path argument", file=sys.stderr)
         return ExitCode.NO_FILEPATH
@@ -91,7 +90,7 @@ async def main(argv: list[str]) -> ExitCode:
         print("Failed to start Telegram Bot Thread", file=sys.stderr)
         return ExitCode.FAILED_TO_START_BOT
 
-    handler = ModifiedHandler(bot._queue, bot.last_access())
+    handler = ModifiedHandler(bot.queue, bot.last_access())
 
     observer = Observer()
     observer.schedule(handler, argv[0], event_filter=(FileModifiedEvent,))
@@ -104,9 +103,7 @@ async def main(argv: list[str]) -> ExitCode:
 
     try:
         while not s.shutdown:
-            await asyncio.sleep(1)
-    except CancelledError as e:
-        pass
+            sleep(1)
     except Exception as e:
         exit_status = ExitCode.OTHER
         print(e, file=sys.stderr)
@@ -121,4 +118,4 @@ async def main(argv: list[str]) -> ExitCode:
 
 
 if __name__ == "__main__":
-    sys.exit(asyncio.run(main(sys.argv[1:])))
+    sys.exit(main(sys.argv[1:]))

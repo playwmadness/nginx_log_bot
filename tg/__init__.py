@@ -35,6 +35,9 @@ class BotThread(Thread):
 
     @property
     def queue(self) -> Queue[tuple[str, list[Access]]]:
+        r"""
+        Consumer queue for log entries
+        """
         return self._queue
 
     def start(self, init_timeout: float = 1) -> None:
@@ -43,6 +46,9 @@ class BotThread(Thread):
             raise RuntimeError("Failed to initialize BotThread")
 
     def last_access(self) -> datetime:
+        r"""
+        :return: The most recent log entry timestamp present in the database.
+        """
         try:
             return self._ipinfo.last_access()  # pyright: ignore
         except AttributeError as e:
@@ -79,4 +85,7 @@ class BotThread(Thread):
         self._queue.join()
 
     def stop(self) -> None:
+        r"""
+        Stops the bot thread.
+        """
         self._running = False

@@ -26,6 +26,11 @@ class IpInfo:
         self._db_session = Session(db_engine)
 
     async def find(self, ip: str) -> Info:
+        r"""
+        Fetch info about ip.
+        If ip exists in the DB, returns Info from DB.
+        Otherwise queries ipinfo API, adds new entry to DB, then returns Info.
+        """
         if entry := self._db_find(ip):
             return entry
 
@@ -37,6 +42,10 @@ class IpInfo:
         return entry
 
     async def find_and_update(self, ip: str, accesses: list[Access]) -> Info:
+        r"""
+        Fetch info about ip and update accesses table.
+        If ip doesn't exist in DB, creates new entry with data received from ipinfo API.
+        """
         entry = self._db_find(ip) or await self._ipinfo_find(ip)
 
         entry.accesses.update(accesses)
@@ -47,6 +56,9 @@ class IpInfo:
         return entry
 
     def last_access(self) -> datetime:
+        r"""
+        Returns the most recent log entry timestamp present in the database.
+        """
         return self._db_session.scalar(func.max(Access.timestamp)) or datetime(
             MINYEAR, 1, 1
         )
